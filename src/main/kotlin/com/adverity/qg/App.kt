@@ -190,25 +190,30 @@ fun main() {
         kpis.containsKey(text)
     }
     
+    val makeAggFld = { measure: String, fld: Field<BigDecimal> ->
+        when (measure) {
+            "avg" -> DSL.avg(fld)
+            else -> DSL.sum(fld)
+        }
+    }
+    
     val buildKpiFormula: (String, KpiDefs, DataMappings, FactDimension) -> Field<BigDecimal> = { kpi: String, kpis: KpiDefs, mappings: DataMappings, dimension: FactDimension -> 
         val measure = kpis[kpi]?.measure ?: "sum"
-        val aggFld = DSL.field(kpi, BigDecimal::class.java)
-        val fld = when (measure) {
-            "avg" -> DSL.avg(aggFld) 
-            else -> DSL.sum(aggFld)
-        }
+        val fld = DSL.field(kpi, BigDecimal::class.java)
+        val aggFld = makeAggFld(measure, fld)
         val dim = mappings[dimension.name]?.text
         if (!dimension.isLast) {
-            fld.over().partitionBy(DSL.field(dim)) 
+            makeAggFld(measure, aggFld).over().partitionBy(DSL.field(dim)) 
+        } else {
+            aggFld
         }
-        fld
     }
     
     val dsl: DSLContext = DSL.using(SQLDialect.POSTGRES)
     
     val dimensions = listOf(FactDimension("Datasource"), FactDimension("Client", true))
     val columns = listOf(FactColumn("costs"), FactColumn("MyKpi"))
-    val tables = listOf(FactSource("facts_5"), FactSource("facts_4"))
+    val tables = listOf(FactSource("facts_5"), FactSource("facts_6"))
     
     val q = buildJooqQuery(dsl, dimensions, columns, tables, kpis, mappings, verifyKpi, buildKpiFormula)
 
