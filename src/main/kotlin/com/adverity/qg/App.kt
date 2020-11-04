@@ -12,7 +12,7 @@ class AdverityParseExc(error: String): Exception(error)
 
 data class Kpi(val measure: String)
 data class FactSource(val name: String)
-data class FactDimension(val name: String)
+data class FactDimension(val name: String, val isLast: Boolean = false)
 data class FactColumn(val name: String)
 
 sealed class QueryExpr(val text: String) {
@@ -43,67 +43,13 @@ class ThrowingErrorListener : BaseErrorListener() {
     }
 }
 
-class KpiCustomListener : KpiBaseListener() {
-    override fun enterPlusMinus(ctx: KpiParser.PlusMinusContext?) {
-        println("Entered plus minus")
-        println(ctx?.MINUS().toString())
-        super.enterPlusMinus(ctx)
-    }
-}
-
-class KpiCustomParser(private val tokens: CommonTokenStream) : KpiParser(tokens) {
+class KpiCustomParser(tokens: CommonTokenStream) : KpiParser(tokens) {
     override fun storeAgg(agg: Token?) {
         println("AGG -> ${agg?.startIndex} -> ${agg?.stopIndex} : ${agg?.text}")
     }
 }
 
-internal class CustomVisitor(
-    val verifyKpi: VerifyKpi,
-    val buildKpiFormula: BuildKpiFormula
-) : KpiBaseVisitor<String?>() {
-    
-    override fun aggregateResult(aggregate: String?, nextResult: String?): String? {
-        if (aggregate == null) {
-            return nextResult
-        }
-        if (nextResult == null) {
-            return aggregate
-        }
-        val sb = StringBuilder(aggregate)
-        sb.append(" ")
-        sb.append(nextResult)
-        return sb.toString()
-    }
-    
-    override fun visitMulDiv(ctx: KpiParser.MulDivContext): String? {
-        val fmul = ctx.op.type == KpiParser.FMUL
-        val op = if (fmul) "*" else ctx.op.text
-        
-        return visit(ctx.left) + op + visit(ctx.right)
-    }
-    
-    override fun visitPlusMinus(ctx: KpiParser.PlusMinusContext): String {
-        return visit(ctx.left) + ctx.op.text + visit(ctx.right)
-    }
-    
-    override fun visitParenExpr(ctx: KpiParser.ParenExprContext): String? {
-        return '(' + (visit(ctx.getChild(1)) ?: "") + ')'
-    }
-    
-    override fun visitAgg(ctx: KpiParser.AggContext): String {
-        val rawKpiName = ctx.text.drop(1).dropLast(1)
-        if (!verifyKpi(rawKpiName)) {
-            throw AdverityParseExc("Undefined KPI $rawKpiName")
-        }
-        return ctx.text
-    }
-    
-    override fun visitNumber(ctx: KpiParser.NumberContext): String? {
-        return ctx.NUMBER().text
-    }
-}
-
-internal class CustomVisitorFld(
+internal class KpiFieldVisitor(
     val dimensions: FactDimension,
     val kpis: KpiDefs,
     val mappings: DataMappings,
@@ -122,14 +68,14 @@ internal class CustomVisitorFld(
     }
     
     override fun visitMulDiv(ctx: KpiParser.MulDivContext): Field<BigDecimal> {
-        if (ctx.op.type == KpiParser.FMUL || ctx.op.type == KpiParser.MUL) {
+        if (ctx.op.type == KpiParser.MUL) {
             return visit(ctx.left).mul(visit(ctx.right))
         }
         return visit(ctx.left).div(visit(ctx.right))
     }
     
-    override fun visitPlusMinus(ctx: KpiParser.PlusMinusContext): Field<BigDecimal> {
-        if (ctx.op.type == KpiParser.PLUS) {
+    override fun visitAddSub(ctx: KpiParser.AddSubContext): Field<BigDecimal> {
+        if (ctx.op.type == KpiParser.ADD) {
             return visit(ctx.left).add(visit(ctx.right))
         }
         return visit(ctx.left).sub(visit(ctx.right))
@@ -164,30 +110,9 @@ fun makeSelectAllQuery(ctx: DSLContext, tableName: String): SelectQuery<Record> 
 }
 
 fun parseKpi(kpi: String,
-             dimensions: FactDimension,
-             verifyKpi: VerifyKpi,
-             buildKpiFormula: BuildKpiFormula
-): String? {
-    val lexer = KpiLexer(CharStreams.fromString(kpi))
-    lexer.removeErrorListeners()
-    lexer.addErrorListener(ThrowingErrorListener.INSTANCE)
-    val tokens = CommonTokenStream(lexer)
-    val parser = KpiCustomParser(tokens)
-    parser.removeErrorListeners()
-    parser.addErrorListener(ThrowingErrorListener.INSTANCE)
-    val tree: ParserRuleContext = parser.init()
-    val visitor = CustomVisitor(verifyKpi, buildKpiFormula)
-    return visitor.visit(tree)
-    //println(tree.toStringTree())
-    //val listener = KpiCustomListener()
-    //val walker = ParseTreeWalker()
-    //walker.walk(listener, tree)
-}
-
-fun parseKpi2(kpi: String,
              dimension: FactDimension,
-              kpis: KpiDefs,
-              mappings: DataMappings,
+             kpis: KpiDefs,
+             mappings: DataMappings,
              verifyKpi: VerifyKpi,
              buildKpiFormula: BuildKpiFormula
 ): Field<BigDecimal>? {
@@ -199,7 +124,7 @@ fun parseKpi2(kpi: String,
     parser.removeErrorListeners()
     parser.addErrorListener(ThrowingErrorListener.INSTANCE)
     val tree: ParserRuleContext = parser.init()
-    val visitor = CustomVisitorFld(dimension, kpis, mappings, verifyKpi, buildKpiFormula)
+    val visitor = KpiFieldVisitor(dimension, kpis, mappings, verifyKpi, buildKpiFormula)
     return visitor.visit(tree)
 }
 
@@ -229,7 +154,7 @@ fun buildJooqQuery(ctx: DSLContext,
                 is QueryExpr.Formula -> {
                     dimensions.mapIndexed { index, d ->
                         val dim = mappings[d.name]?.text
-                        parseKpi2(mapping.text, d, kpis, mappings, verifyKpi, buildKpiFormula)?.`as`("kpi_${index}~${dim}")
+                        parseKpi(mapping.text, d, kpis, mappings, verifyKpi, buildKpiFormula)?.`as`("kpi_${index}~${dim}")
                     }
                 }
                 else -> emptyList<Field<Any>>()
@@ -242,7 +167,7 @@ fun buildJooqQuery(ctx: DSLContext,
     
     q.addFrom(innerUnion)
     dimensions.forEach {
-        val fld = DSL.field(it.name) 
+        val fld = DSL.field(mappings[it.name]?.text) 
         q.addGroupBy(fld)
         q.addOrderBy(fld.asc().nullsLast())
     }
@@ -273,12 +198,15 @@ fun main() {
             else -> DSL.sum(aggFld)
         }
         val dim = mappings[dimension.name]?.text
-        fld.over().partitionBy(DSL.field(dim));//.`as`("${kpi}_${measure}~${dimension.name}".toLowerCase())
+        if (!dimension.isLast) {
+            fld.over().partitionBy(DSL.field(dim)) 
+        }
+        fld
     }
     
     val dsl: DSLContext = DSL.using(SQLDialect.POSTGRES)
     
-    val dimensions = listOf(FactDimension("Datasource"), FactDimension("Client"))
+    val dimensions = listOf(FactDimension("Datasource"), FactDimension("Client", true))
     val columns = listOf(FactColumn("costs"), FactColumn("MyKpi"))
     val tables = listOf(FactSource("facts_5"), FactSource("facts_4"))
     
@@ -286,23 +214,4 @@ fun main() {
 
     println(q.toString())
     
-    
-//    println("------------")
-//    println(parseKpi("(((clicks) * 20))+((impressions)*2)", verifyKpi))
-
-//    println("------------")
-//    println(parseKpi2("(clicks)+(impressions)*20", FactDimension("Datasource"), kpis, verifyKpi, buildKpiFormula))
-
-
-//    val clientField = DSL.field("client")
-//    val clicksField = DSL.field("clicks", Long::class.java)
-//    
-//    val facts_5 = DSL.table("facts_5")
-//    
-//    val sq = dsl.selectQuery()
-//    sq.addSelect(DSL.sum(clicksField).over().partitionBy(datasourceField), datasourceField, clientField)
-//    sq.addFrom(facts_5)
-//    sq.addGroupBy(datasourceField, clicksField)
-//    
-//    println(sq.toString())
 }

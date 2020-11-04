@@ -5,21 +5,20 @@ public void storeAgg(Token agg) {};
 
 init: expr EOF ;
 
-expr : left=expr op=(MUL | FMUL | DIV)    right=expr   # MulDiv
-     | left=expr op=(PLUS | MINUS) right=expr   # PlusMinus
-     | LPAREN expr RPAREN                       # ParenExpr
-     | AGG                                      { storeAgg($AGG); } # Agg
-     | NUMBER                                   # Number
+expr : left=expr op=(MUL | DIV) right=expr   # MulDiv
+     | left=expr op=(ADD | SUB) right=expr   # AddSub
+     | LPAREN expr RPAREN                    # ParenExpr
+     | AGG                                   { storeAgg($AGG); } # Agg
+     | NUMBER                                # Number
      ;
      
 AGG : LPAREN IDENTIFIER RPAREN ;
 
 LPAREN : '(' ;
 RPAREN : ')' ;
-PLUS : '+' ;
-MINUS : '-' ;
+ADD : '+' ;
+SUB : '-' ;
 MUL : '*' ;
-FMUL : 'mul' ;
 DIV : '/' ;
 
 NUMBER : [0-9] + ('.' [0-9]+)? ;
