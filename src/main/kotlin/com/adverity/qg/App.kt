@@ -43,12 +43,6 @@ class ThrowingErrorListener : BaseErrorListener() {
     }
 }
 
-class KpiCustomParser(tokens: CommonTokenStream) : KpiParser(tokens) {
-    override fun storeAgg(agg: Token?) {
-        println("AGG -> ${agg?.startIndex} -> ${agg?.stopIndex} : ${agg?.text}")
-    }
-}
-
 internal class KpiFieldVisitor(
     val dimensions: FactDimension,
     val kpis: KpiDefs,
@@ -120,7 +114,7 @@ fun parseKpi(kpi: String,
     lexer.removeErrorListeners()
     lexer.addErrorListener(ThrowingErrorListener.INSTANCE)
     val tokens = CommonTokenStream(lexer)
-    val parser = KpiCustomParser(tokens)
+    val parser = KpiParser(tokens)
     parser.removeErrorListeners()
     parser.addErrorListener(ThrowingErrorListener.INSTANCE)
     val tree: ParserRuleContext = parser.init()

@@ -1,14 +1,11 @@
 grammar Kpi;
-@members {
-public void storeAgg(Token agg) {};
-}
 
 init: expr EOF ;
 
 expr : left=expr op=(MUL | DIV) right=expr   # MulDiv
      | left=expr op=(ADD | SUB) right=expr   # AddSub
      | LPAREN expr RPAREN                    # ParenExpr
-     | AGG                                   { storeAgg($AGG); } # Agg
+     | AGG                                   # Agg
      | NUMBER                                # Number
      ;
      
