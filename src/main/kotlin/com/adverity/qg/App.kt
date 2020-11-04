@@ -35,7 +35,7 @@ class ThrowingErrorListener : BaseErrorListener() {
         msg: String,
         e: RecognitionException?
     ) {
-        throw ParseCancellationException("line $line:$charPositionInLine $msg")
+        throw AdverityParseExc("line $line:$charPositionInLine $msg")
     }
     
     companion object {
